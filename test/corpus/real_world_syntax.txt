@@ -1,0 +1,77 @@
+===================
+Exported module attributes and common VBA calls
+===================
+Attribute VB_Name = "RealWorld"
+Option Explicit
+
+Public Function GetObjectOrNothing() As Object
+    If GetObjectOrNothing Is Nothing Then Exit Function
+End Function
+
+Public Sub Run(Optional ByVal showMessage As Boolean = True)
+    Dim r As Long
+    If r < 2 Then r = 2
+    Err.Raise vbObjectError + 2000, , _
+        "failure"
+    MsgBox "done", vbInformation, "title"
+    WalkControl session.Children.ElementAt(0), r, showMessage
+End Sub
+---
+(source_file
+  (attribute_statement
+    (identifier)
+    (string_literal))
+  (option_statement)
+  (function_statement
+    (identifier)
+    (type
+      (identifier))
+    (block
+      (single_line_if_statement
+        (expression
+          (binary_expression
+            (expression
+              (primary_expression
+                (identifier)))
+            (expression
+              (primary_expression
+                (nothing_literal)))))
+        (exit_statement))))
+  (sub_statement
+    (identifier)
+    (identifier)
+    (type
+      (identifier))
+    (expression
+      (primary_expression
+        (boolean_literal)))
+    (block
+      (dim_statement
+        (identifier)
+        (type
+          (identifier)))
+      (single_line_if_statement
+        (expression
+          (binary_expression
+            (expression
+              (primary_expression
+                (identifier)))
+            (expression
+              (primary_expression
+                (number_literal)))))
+        (expression
+          (binary_expression
+            (expression
+              (primary_expression
+                (identifier)))
+            (expression
+              (primary_expression
+                (number_literal))))))
+      (raise_statement
+        (implicit_call_argument_tail))
+      (implicit_call_statement
+        (identifier)
+        (implicit_call_argument_tail))
+      (implicit_call_statement
+        (identifier)
+        (implicit_call_argument_tail)))))

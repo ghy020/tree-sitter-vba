@@ -13,11 +13,15 @@ function ci(word) {
 module.exports = grammar({
   name: 'vba',
 
-  extras: $ => [/\s/, $.comment, $._line_continuation],
+  extras: $ => [/\s/, $.comment, $._line_continuation, $._statement_separator],
 
   conflicts: $ => [
     [$.function_call, $.primary_expression],
     [$.dim_statement],
+    [$._arg_expression_list, $.primary_expression],
+    [$.block, $._simple_statement],
+    [$.member_expression, $.leading_member_expression],
+    [$.array_bounds, $._arg_expression_list],
   ],
 
   rules: {
@@ -25,12 +29,19 @@ module.exports = grammar({
 
     comment: $ => token(seq("'", /[^\n]*/)),
     _line_continuation: $ => /_[ \t]*\r?\n/,
+    _statement_separator: $ => ':',
 
     _module_scope: $ => choice(
+      $.attribute_statement,
       $.option_statement, $.declare_statement,
       $.sub_statement, $.function_statement,
       $.property_statement, $.type_statement, $.enum_statement,
       $.const_statement, $.dim_statement,
+    ),
+
+    attribute_statement: $ => seq(
+      ci('Attribute'), $.identifier, '=',
+      choice($.string_literal, $.number_literal, $.boolean_literal),
     ),
 
     option_statement: $ => seq(
@@ -89,7 +100,9 @@ module.exports = grammar({
     _arg_list: $ => seq('(', optional(seq($._arg, repeat(seq(',', $._arg)))), ')'),
 
     _arg: $ => seq(
-      optional(choice(ci('Optional'), ci('ByVal'), ci('ByRef'), ci('ParamArray'))),
+      optional(ci('Optional')),
+      optional(choice(ci('ByVal'), ci('ByRef'))),
+      optional(ci('ParamArray')),
       $.identifier,
       optional($._array_dim),
       optional(seq(ci('As'), $.type)),
@@ -99,30 +112,32 @@ module.exports = grammar({
     type: $ => $.identifier,
 
     block: $ => repeat1(choice(
-      $.if_statement, $.for_statement, $.for_each_statement,
+      $.if_statement, $.single_line_if_statement,
+      $.for_statement, $.for_each_statement,
       $.while_statement, $.do_statement, $.with_statement,
       $.select_case_statement, $.on_error_statement, $.resume_statement,
       $.erase_statement, $.redim_statement,
-      $.set_statement, $.let_statement, $.call_statement,
+      $.set_statement, $.let_statement, $.call_statement, $.raise_statement,
+      $.implicit_call_statement,
       $.exit_statement, $.goto_statement,
       $.dim_statement, $.const_statement,
-      $.label_statement, $.error_statement, $.mid_statement,
+      $.error_statement, $.mid_statement,
       $.expression,
     )),
 
     _statement: $ => choice(
-      $.if_statement, $.for_statement, $.for_each_statement,
+      $.if_statement, $.single_line_if_statement,
+      $.for_statement, $.for_each_statement,
       $.while_statement, $.do_statement, $.with_statement,
       $.select_case_statement, $.on_error_statement, $.resume_statement,
       $.erase_statement, $.redim_statement,
-      $.set_statement, $.let_statement, $.call_statement,
+      $.set_statement, $.let_statement, $.call_statement, $.raise_statement,
+      $.implicit_call_statement,
       $.exit_statement, $.goto_statement,
       $.dim_statement, $.const_statement,
-      $.label_statement, $.error_statement, $.mid_statement,
+      $.error_statement, $.mid_statement,
       $.expression,
     ),
-
-    label_statement: $ => seq($.identifier, ':'),
 
     error_statement: $ => seq(ci('Error'), $.expression),
 
@@ -130,26 +145,37 @@ module.exports = grammar({
       ci('Mid'), '(', $.identifier, ',', $.expression, ',', $.expression, ')', '=', $.expression,
     ),
 
-    if_statement: $ => seq(
+    if_statement: $ => prec(1, seq(
       ci('If'), $.expression, ci('Then'),
       $.block,
       repeat($.elseif_clause),
       optional($.else_clause),
       ci('End'), ci('If'),
+    )),
+    single_line_if_statement: $ => prec.right(2, seq(
+      ci('If'), $.expression, ci('Then'),
+      $._simple_statement,
+      optional(seq(ci('Else'), $._simple_statement)),
+    )),
+    _simple_statement: $ => choice(
+      $.set_statement, $.let_statement, $.call_statement,
+      $.implicit_call_statement, $.raise_statement,
+      $.exit_statement, $.goto_statement,
+      $.resume_statement, $.error_statement, $.expression,
     ),
     elseif_clause: $ => seq(ci('ElseIf'), $.expression, ci('Then'), $.block),
     else_clause: $ => seq(ci('Else'), $.block),
 
-    for_statement: $ => seq(
+    for_statement: $ => prec.right(seq(
       ci('For'), $.identifier, '=', $.expression, ci('To'), $.expression,
       optional(seq(ci('Step'), $.expression)),
-      optional($.block), ci('Next'),
-    ),
+      optional($.block), ci('Next'), optional($.identifier),
+    )),
 
-    for_each_statement: $ => seq(
+    for_each_statement: $ => prec.right(seq(
       ci('For'), ci('Each'), $.identifier, ci('In'), $.expression,
-      optional($.block), ci('Next'),
-    ),
+      optional($.block), ci('Next'), optional($.identifier),
+    )),
 
     while_statement: $ => seq(ci('While'), $.expression, optional($.block), ci('Wend')),
     do_statement: $ => choice(
@@ -163,7 +189,12 @@ module.exports = grammar({
       repeat($.case_clause), optional(seq(ci('Case'), ci('Else'), $.block)),
       ci('End'), ci('Select'),
     ),
-    case_clause: $ => seq(ci('Case'), choice($.expression, seq(ci('Is'), $.expression)), optional($.block)),
+    case_clause: $ => seq(
+      ci('Case'),
+      choice($.expression, seq(ci('Is'), $.expression)),
+      repeat(seq(',', choice($.expression, seq(ci('Is'), $.expression)))),
+      optional($.block),
+    ),
 
     on_error_statement: $ => seq(
       ci('On'), ci('Error'),
@@ -175,10 +206,41 @@ module.exports = grammar({
     ),
     resume_statement: $ => seq(ci('Resume'), choice(ci('Next'), $.expression)),
     erase_statement: $ => seq(ci('Erase'), $.expression, repeat(seq(',', $.expression))),
-    redim_statement: $ => seq(ci('ReDim'), optional(ci('Preserve')), $.expression, repeat(seq(',', $.expression))),
+    redim_statement: $ => seq(
+      ci('ReDim'), optional(ci('Preserve')),
+      $.redim_variable,
+      repeat(seq(',', $.redim_variable)),
+    ),
+    redim_variable: $ => seq(
+      choice($.identifier, $.member_expression),
+      '(', $.array_bounds, repeat(seq(',', $.array_bounds)), ')',
+    ),
+    array_bounds: $ => seq(
+      optional(seq($.expression, ci('To'))),
+      $.expression,
+    ),
     let_statement: $ => seq(optional(ci('Let')), $.expression, '=', $.expression),
     set_statement: $ => seq(ci('Set'), $.expression, '=', $.expression),
     call_statement: $ => seq(ci('Call'), $.expression),
+    raise_statement: $ => seq(
+      ci('Err'), '.', ci('Raise'),
+      choice($.implicit_call_argument_tail, $.expression),
+    ),
+    implicit_call_statement: $ => choice(
+      seq(
+        $.identifier,
+        $.implicit_call_argument_tail,
+      ),
+      prec.right(6, seq(
+        choice($.identifier, $.member_expression),
+        $.expression,
+      )),
+    ),
+    implicit_call_argument_tail: $ => token(prec(1, seq(
+      /[ \t]+/,
+      /(?:_[ \t]*\r?\n|[^\r\n,])+/,
+      repeat1(seq(',', /(?:_[ \t]*\r?\n|[^\r\n,])*/)),
+    ))),
     exit_statement: $ => seq(ci('Exit'), choice(ci('Sub'), ci('Function'), ci('Property'), ci('Do'), ci('For'), ci('While'))),
     goto_statement: $ => seq(ci('GoTo'), $.expression),
 
@@ -204,12 +266,14 @@ module.exports = grammar({
       $.binary_expression,
       $.call_expression,
       $.member_expression,
+      $.leading_member_expression,
+      $.named_argument_expression,
       $.function_call,
       $.primary_expression,
     ),
 
     call_expression: $ => prec.left(5, seq(
-      choice($.member_expression, $.function_call),
+      choice($.member_expression, $.leading_member_expression, $.function_call),
       '(', optional($._arg_expression_list), ')',
     )),
 
@@ -218,19 +282,32 @@ module.exports = grammar({
       '.', $.identifier,
     )),
 
+    leading_member_expression: $ => prec.left(10, seq(
+      '.', $.identifier,
+      repeat(seq('.', $.identifier)),
+    )),
+
+    named_argument_expression: $ => prec.right(6, seq(
+      $.identifier, ':=', $.expression,
+    )),
+
     assignment_expression: $ => prec.right(-1, seq($.expression, '=', $.expression)),
 
     binary_expression: $ => choice(
       prec.left(1, seq($.expression, choice('+', '-', '*', '/', '\\', ci('Mod'), '^'), $.expression)),
       prec.left(2, seq($.expression, '&', $.expression)),
       prec.left(3, seq($.expression, choice('=', '<>', '<', '>', '<=', '>='), $.expression)),
+      prec.left(3, seq($.expression, ci('Is'), optional(ci('Not')), $.expression)),
       prec.left(4, seq($.expression, choice(ci('And'), ci('Or'), ci('Xor'), ci('Eqv'), ci('Imp')), $.expression)),
     ),
 
     unary_expression: $ => prec.left(5, seq(choice(ci('Not'), '-'), $.expression)),
 
     function_call: $ => seq($.identifier, '(', optional($._arg_expression_list), ')'),
-    _arg_expression_list: $ => seq($.expression, repeat(seq(',', $.expression))),
+    _arg_expression_list: $ => choice(
+      seq($.expression, repeat(seq(',', optional($.expression)))),
+      seq(',', optional($.expression), repeat(seq(',', optional($.expression)))),
+    ),
 
     primary_expression: $ => choice(
       $.identifier, $.number_literal, $.string_literal,
@@ -249,6 +326,6 @@ module.exports = grammar({
     null_literal: $ => ci('Null'),
     empty_literal: $ => ci('Empty'),
 
-    identifier: $ => /[a-zA-Z_][a-zA-Z0-9_]*/,
+    identifier: $ => /[a-zA-Z_][a-zA-Z0-9_]*[$%&@!#]?/,
   },
 });
